@@ -1,35 +1,45 @@
 import express from "express";
-import { createServer } from "node:http";
+import { createServer } from "http";
 import cors from "cors";
 import mongoose from "mongoose";
-import { connectToSocket } from "./controllers/SocketManager.js";
+import dotenv from "dotenv";
+import { initSocket } from "./SocketManager.js";
 import userRouter from "./routes/Users.route.js";
+
+dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
-connectToSocket(httpServer);
 
-app.use(cors());
+// Middleware
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL,
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
+// Routes
 app.use("/api/v1/users", userRouter);
 
+// Initialize Socket.IO
+initSocket(httpServer);
+
+// MongoDB Connection
 const startServer = async () => {
   try {
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log("MongoDB Connected");
+
     const PORT = process.env.PORT || 8000;
-
-    const connectionDb = await mongoose.connect(
-      "mongodb+srv://raisakshi643_db_user:ZkNfctDCQw5S7foU@cluster0.f94bwax.mongodb.net/?appName=Cluster0"
-    );
-
-    console.log(`MongoDB Connected: ${connectionDb.connection.host}`);
 
     httpServer.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
-
   } catch (error) {
-    console.error("Error starting server:", error);
+    console.error("Server start error:", error);
   }
 };
 

@@ -12,7 +12,7 @@ import ChatIcon from "@mui/icons-material/Chat";
 import styles from "../styles/videoComponent.module.css";
 import server from "../environment";
 
-const server_url = server;
+const server_url = "http://localhost:8000";
 const peerConfigConnections = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
@@ -108,21 +108,75 @@ export default function VideoMeetComponent() {
   // ------------------ SOCKET ------------------
 
   const connectToSocketServer = useCallback(() => {
-    socketRef.current = io(server_url);
+  socketRef.current = io(server_url);
 
-    socketRef.current.on("connect", () => {
-      socketIdRef.current = socketRef.current.id;
-      socketRef.current.emit("join-call", window.location.href);
+  socketRef.current.on("connect", () => {
+    socketIdRef.current = socketRef.current.id;
+    socketRef.current.emit("join-call", window.location.href);
+  });
+
+  socketRef.current.on("user-joined", (socketId) => {
+    const peer = new RTCPeerConnection(peerConfigConnections);
+
+    connections.current[socketId] = peer;
+
+    // Add local stream tracks
+    window.localStream?.getTracks().forEach((track) => {
+      peer.addTrack(track, window.localStream);
     });
 
-    socketRef.current.on("chat-message", (data, sender, socketIdSender) => {
-      setMessages((prev) => [...prev, { sender, data }]);
-      if (socketIdSender !== socketIdRef.current) {
-        setNewMessages((prev) => prev + 1);
+    peer.onicecandidate = (event) => {
+      if (event.candidate) {
+        socketRef.current.emit("signal", socketId, {
+          ice: event.candidate,
+        });
       }
-    });
-  }, []);
+    };
 
+    peer.ontrack = (event) => {
+      setVideos((prev) => [
+        ...prev,
+        { socketId, stream: event.streams[0] },
+      ]);
+    };
+
+    peer.createOffer().then((offer) => {
+      peer.setLocalDescription(offer);
+      socketRef.current.emit("signal", socketId, {
+        sdp: offer,
+      });
+    });
+  });
+
+  socketRef.current.on("signal", async (fromId, message) => {
+    const peer =
+      connections.current[fromId] ||
+      new RTCPeerConnection(peerConfigConnections);
+
+    connections.current[fromId] = peer;
+
+    if (message.sdp) {
+      await peer.setRemoteDescription(
+        new RTCSessionDescription(message.sdp)
+      );
+
+      if (message.sdp.type === "offer") {
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+
+        socketRef.current.emit("signal", fromId, {
+          sdp: answer,
+        });
+      }
+    }
+
+    if (message.ice) {
+      await peer.addIceCandidate(
+        new RTCIceCandidate(message.ice)
+      );
+    }
+  });
+}, []);
   // ------------------ CONTROLS ------------------
 
   const handleVideo = () => setVideo((prev) => !prev);
